@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout build scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install CMake
         uses: lukka/get-cmake@latest
@@ -137,17 +137,9 @@ jobs:
           $issContent | Out-File -FilePath "installer.iss" -Encoding utf8BOM
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer.iss"
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kelivo-Windows-${{ steps.version.outputs.version }}
-          path: |
-            Kelivo_windows_*.zip
-            Kelivo_windows_*_setup.exe
-
       - name: Publish to release
         if: ${{ inputs.publish_release && inputs.release_tag != '' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.release_tag }}
           name: ${{ inputs.release_tag }}
