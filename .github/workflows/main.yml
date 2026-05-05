@@ -6,7 +6,7 @@ on:
       flutter_version:
         description: Flutter version
         required: false
-        default: "3.35.7"
+        default: "3.38.5"
         type: string
   schedule:
     - cron: "0 18 * * *"
@@ -17,7 +17,7 @@ permissions:
 env:
   SOURCE_DIR: kelivo-src
   UPSTREAM_REPO: Chevey339/kelivo
-  FLUTTER_VERSION: ${{ inputs.flutter_version || '3.35.7' }}
+  FLUTTER_VERSION: ${{ inputs.flutter_version || '3.38.5' }}
 
 jobs:
   build-windows:
@@ -126,9 +126,6 @@ jobs:
         with:
           tag_name: ${{ steps.upstream_version.outputs.tag }}
           name: ${{ steps.upstream_version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
           files: Kelivo_windows_*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
