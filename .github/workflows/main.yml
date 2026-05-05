@@ -8,22 +8,16 @@ on:
         required: false
         default: "3.35.7"
         type: string
-      publish_release:
-        description: Upload artifacts to this repository release
-        required: false
-        default: false
-        type: boolean
-      release_tag:
-        description: Release tag in this repository, required when publishing
-        required: false
-        default: ""
-        type: string
+  schedule:
+    - cron: "0 18 * * *"
 
 permissions:
   contents: write
 
 env:
   SOURCE_DIR: kelivo-src
+  UPSTREAM_REPO: Chevey339/kelivo
+  FLUTTER_VERSION: ${{ inputs.flutter_version || '3.35.7' }}
 
 jobs:
   build-windows:
@@ -34,21 +28,67 @@ jobs:
       - name: Checkout build scripts
         uses: actions/checkout@v6
 
+      - name: Get upstream version
+        id: upstream_version
+        shell: bash
+        env:
+          OWNER_REPO: ${{ env.UPSTREAM_REPO }}
+        run: |
+          tag=$(sh ./get_latest_version.sh)
+          if [ -z "$tag" ]; then
+            echo "ERROR: upstream version tag is empty" >&2
+            exit 1
+          fi
+
+          safe_tag=$(printf '%s' "$tag" | sed 's#[^A-Za-z0-9._-]#_#g')
+          echo "VERSION_TAG=$tag" >> "$GITHUB_ENV"
+          echo "VERSION_SAFE=$safe_tag" >> "$GITHUB_ENV"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "safe_tag=$safe_tag" >> "$GITHUB_OUTPUT"
+          echo "Upstream version tag: $tag"
+
+      - name: Check current repository release
+        id: current_release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.upstream_version.outputs.tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "skip_build=true" >> "$GITHUB_OUTPUT"
+            echo "Release $RELEASE_TAG already exists in $GITHUB_REPOSITORY. Skip download and build."
+          else
+            echo "skip_build=false" >> "$GITHUB_OUTPUT"
+            echo "Release $RELEASE_TAG does not exist in $GITHUB_REPOSITORY. Continue build."
+          fi
+
+      - name: Skip existing release
+        if: ${{ steps.current_release.outputs.skip_build == 'true' }}
+        shell: bash
+        run: echo "Current repository already has release $VERSION_TAG. Nothing to build."
+
       - name: Install CMake
+        if: ${{ steps.current_release.outputs.skip_build != 'true' }}
         uses: lukka/get-cmake@latest
 
       - name: Install Flutter
+        if: ${{ steps.current_release.outputs.skip_build != 'true' }}
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ inputs.flutter_version }}
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
 
       - name: Download latest Kelivo source and apply patch
+        if: ${{ steps.current_release.outputs.skip_build != 'true' }}
         shell: bash
+        env:
+          OWNER_REPO: ${{ env.UPSTREAM_REPO }}
+          VERSION_TAG: ${{ steps.upstream_version.outputs.tag }}
         run: sh ./download_and_patch.sh
 
       - name: Inject fallback
+        if: ${{ steps.current_release.outputs.skip_build != 'true' }}
         shell: bash
         working-directory: ${{ env.SOURCE_DIR }}
         run: |
@@ -58,91 +98,37 @@ jobs:
           EOF
 
       - name: Get dependencies
+        if: ${{ steps.current_release.outputs.skip_build != 'true' }}
         working-directory: ${{ env.SOURCE_DIR }}
         run: flutter pub get
 
       - name: Check CMake version
+        if: ${{ steps.current_release.outputs.skip_build != 'true' }}
         shell: pwsh
         working-directory: ${{ env.SOURCE_DIR }}
         run: cmake --version
 
-      - name: Read version
-        id: version
-        shell: pwsh
-        working-directory: ${{ env.SOURCE_DIR }}
-        run: |
-          $version = (Select-String -Path pubspec.yaml -Pattern "^version:" | ForEach-Object { $_.Line.Split(":")[1].Trim() })
-          $safeVersion = $version -replace '\+', '_'
-          echo "VERSION=$safeVersion" >> $env:GITHUB_ENV
-          echo "version=$safeVersion" >> $env:GITHUB_OUTPUT
-          Write-Host "Version: $safeVersion"
-
       - name: Build Windows
+        if: ${{ steps.current_release.outputs.skip_build != 'true' }}
         working-directory: ${{ env.SOURCE_DIR }}
         run: flutter build windows --release
 
       - name: Pack portable ZIP
+        if: ${{ steps.current_release.outputs.skip_build != 'true' }}
         shell: pwsh
         working-directory: ${{ env.SOURCE_DIR }}
         run: |
-          Compress-Archive -Path "build/windows/x64/runner/Release/*" -DestinationPath "../Kelivo_windows_$env:VERSION.zip"
+          Compress-Archive -Path "build/windows/x64/runner/Release/*" -DestinationPath "../Kelivo_windows_$env:VERSION_SAFE.zip" -Force
 
-      - name: Install Inno Setup
-        run: choco install innosetup -y
-
-      - name: Build installer
-        shell: pwsh
-        working-directory: ${{ env.SOURCE_DIR }}
-        run: |
-          $issContent = @"
-          #define MyAppName "Kelivo"
-          #define MyAppVersion "$env:VERSION"
-          #define MyAppPublisher "Psyche"
-          #define MyAppExeName "kelivo.exe"
-
-          [Setup]
-          AppId={{A7B8C9D0-E1F2-4A5B-8C9D-0E1F2A3B4C5D}}
-          AppName={#MyAppName}
-          AppVersion={#MyAppVersion}
-          AppPublisher={#MyAppPublisher}
-          DefaultDirName={autopf}\{#MyAppName}
-          DefaultGroupName={#MyAppName}
-          OutputDir=..
-          OutputBaseFilename=Kelivo_windows_{#MyAppVersion}_setup
-          Compression=lzma2
-          SolidCompression=yes
-          WizardStyle=modern
-          ArchitecturesInstallIn64BitMode=x64
-          ArchitecturesAllowed=x64
-          UninstallDisplayIcon={app}\{#MyAppExeName}
-
-          [Languages]
-          Name: "english"; MessagesFile: "compiler:Default.isl"
-
-          [Tasks]
-          Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
-
-          [Files]
-          Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-          [Icons]
-          Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-          Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
-          Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-
-          [Run]
-          Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
-          "@
-
-          $issContent | Out-File -FilePath "installer.iss" -Encoding utf8BOM
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer.iss"
-
-      - name: Publish to release
-        if: ${{ inputs.publish_release && inputs.release_tag != '' }}
+      - name: Publish ZIP to release
+        if: ${{ steps.current_release.outputs.skip_build != 'true' }}
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ inputs.release_tag }}
-          name: ${{ inputs.release_tag }}
-          files: |
-            Kelivo_windows_*.zip
-            Kelivo_windows_*_setup.exe
+          tag_name: ${{ steps.upstream_version.outputs.tag }}
+          name: ${{ steps.upstream_version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: Kelivo_windows_*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
