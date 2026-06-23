@@ -68,3 +68,39 @@ replace_line \
   "_desktopMinimizeToTrayOnClose = false;"
 
 echo "Done: $TARGET_FILE"
+
+# ---------------------------------------------------------------------------
+# Patch windows/CMakeLists.txt to silence MSVC experimental coroutine errors.
+# Newer MSVC toolsets (VS 18 / MSVC 14.51+) emit a hard error when
+# <experimental/coroutine> is included. Several Flutter plugins
+# (audioplayers_windows, permission_handler_windows, webview_windows) still
+# use it; adding the define keeps them compiling until upstream migrates.
+#
+# This matches upstream commit:
+#   https://github.com/Chevey339/kelivo/commit/b0e78ee
+# ---------------------------------------------------------------------------
+CMAKE_FILE="$ROOT_DIR/windows/CMakeLists.txt"
+
+if [ ! -f "$CMAKE_FILE" ]; then
+  echo "WARNING: CMakeLists.txt not found: $CMAKE_FILE" >&2
+else
+  INSERT_MARKER="add_definitions(-DUNICODE -D_UNICODE)"
+  INSERT_AFTER="# Silence the deprecated static assertion in newer MSVC"
+  if grep -Fq "SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS" "$CMAKE_FILE"; then
+    echo "SKIP: MSVC coroutine silence already patched"
+  elif grep -Fq "$INSERT_MARKER" "$CMAKE_FILE"; then
+    sed "/^add_definitions(-DUNICODE -D_UNICODE)/a\\
+# Silence the deprecated static assertion in newer MSVC\\
+# toolsets (VS 18 \/ MSVC 14.51+). Several plugins still use it; this keeps them\\
+# compiling until they migrate to C++20.\\
+add_definitions(-D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)" \
+      "$CMAKE_FILE" > "$CMAKE_FILE.tmp.$$"
+    cat "$CMAKE_FILE.tmp.$$" > "$CMAKE_FILE"
+    rm -f "$CMAKE_FILE.tmp.$$"
+    echo "PATCHED: MSVC coroutine silence in windows/CMakeLists.txt"
+  else
+    echo "WARNING: marker '$INSERT_MARKER' not found in $CMAKE_FILE" >&2
+  fi
+fi
+
+echo "All patches applied."

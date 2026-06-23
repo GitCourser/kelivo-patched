@@ -5,6 +5,7 @@ OWNER_REPO="${OWNER_REPO:-Chevey339/kelivo}"
 WORK_DIR="${WORK_DIR:-work}"
 SOURCE_DIR="${SOURCE_DIR:-kelivo-src}"
 PATCH_SCRIPT="${PATCH_SCRIPT:-patch_disable_default_enabled_features.sh}"
+PORTABLE_PATCH_SCRIPT="${PORTABLE_PATCH_SCRIPT:-patch_portable_data_path.sh}"
 GET_VERSION_SCRIPT="${GET_VERSION_SCRIPT:-./get_latest_version.sh}"
 
 need_cmd() {
@@ -53,6 +54,12 @@ cp "$PATCH_SCRIPT" "$SOURCE_DIR/$PATCH_SCRIPT"
 (
   cd "$SOURCE_DIR"
   sh "./$PATCH_SCRIPT"
+)
+
+cp "$PORTABLE_PATCH_SCRIPT" "$SOURCE_DIR/$PORTABLE_PATCH_SCRIPT"
+(
+  cd "$SOURCE_DIR"
+  sh "./$PORTABLE_PATCH_SCRIPT"
 )
 
 echo "Patched source is ready: $SOURCE_DIR"
