@@ -1,12 +1,12 @@
 #!/usr/bin/env sh
 set -eu
 
-# Patch Kelivo defaults for GitHub Actions:
-# 1. Disable app update check notifications by default.
-# 2. Disable desktop tray icon by default.
-# 3. Disable minimize-to-tray-on-close by default.
+# 调整 Kelivo 在自动打包中的默认设置：
+# 1. 默认关闭应用更新检查通知。
+# 2. 默认关闭桌面托盘图标。
+# 3. 默认关闭窗口关闭时最小化到托盘。
 #
-# Usage:
+# 用法：
 #   sh patch_disable_default_enabled_features.sh
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -28,55 +28,54 @@ replace_line() {
   old=$2
   new=$3
 
+  # 先查找旧代码。因为目标文件其他位置可能本来就包含新代码片段，
+  # 如果先查新代码会误判已修补，导致 _load() 中的默认值没有真正替换。
+  if grep -Fq "$old" "$TARGET_FILE"; then
+    sed "s|$old|$new|" "$TARGET_FILE" > "$TMP_FILE"
+    cat "$TMP_FILE" > "$TARGET_FILE"
+    rm -f "$TMP_FILE"
+    echo "PATCHED: $label"
+    return 0
+  fi
+
   if grep -Fq "$new" "$TARGET_FILE"; then
     echo "SKIP: already patched: $label"
     return 0
   fi
 
-  if ! grep -Fq "$old" "$TARGET_FILE"; then
-    echo "ERROR: expected code not found for $label" >&2
-    echo "       $old" >&2
-    exit 1
-  fi
-
-  # GitHub Actions Linux runners provide GNU sed. This script intentionally
-  # uses only sh + grep + sed, without Python/Perl dependencies.
-  sed "s|$old|$new|" "$TARGET_FILE" > "$TMP_FILE"
-  cat "$TMP_FILE" > "$TARGET_FILE"
-  rm -f "$TMP_FILE"
-  echo "PATCHED: $label"
+  echo "ERROR: expected code not found for $label" >&2
+  echo "       $old" >&2
+  exit 1
 }
 
 replace_line \
-  "default app update check notification" \
+  "默认关闭应用更新检查通知" \
   "_showAppUpdates = prefs.getBool(_displayShowAppUpdatesKey) ?? true;" \
   "_showAppUpdates = prefs.getBool(_displayShowAppUpdatesKey) ?? false;"
 
 replace_line \
-  "initial app update check notification state" \
+  "初始化时默认关闭应用更新检查通知" \
   "bool _showAppUpdates = true;" \
   "bool _showAppUpdates = false;"
 
 replace_line \
-  "default desktop tray icon" \
+  "默认关闭桌面托盘图标" \
   "_desktopShowTray = isDesktop;" \
   "_desktopShowTray = false;"
 
 replace_line \
-  "default minimize-to-tray-on-close" \
+  "默认关闭关闭窗口时最小化到托盘" \
   "_desktopMinimizeToTrayOnClose = _desktopShowTray;" \
   "_desktopMinimizeToTrayOnClose = false;"
 
 echo "Done: $TARGET_FILE"
 
 # ---------------------------------------------------------------------------
-# Patch windows/CMakeLists.txt to silence MSVC experimental coroutine errors.
-# Newer MSVC toolsets (VS 18 / MSVC 14.51+) emit a hard error when
-# <experimental/coroutine> is included. Several Flutter plugins
-# (audioplayers_windows, permission_handler_windows, webview_windows) still
-# use it; adding the define keeps them compiling until upstream migrates.
+# 修补 windows/CMakeLists.txt，绕过新版 MSVC 的实验性 coroutine 报错。
+# 较新的 MSVC 工具链会在包含 <experimental/coroutine> 时触发硬错误。
+# 当前若干 Flutter 插件仍会使用它，因此临时添加宏，等待上游迁移到 C++20。
 #
-# This matches upstream commit:
+# 对应上游提交：
 #   https://github.com/Chevey339/kelivo/commit/b0e78ee
 # ---------------------------------------------------------------------------
 CMAKE_FILE="$ROOT_DIR/windows/CMakeLists.txt"
@@ -85,14 +84,12 @@ if [ ! -f "$CMAKE_FILE" ]; then
   echo "WARNING: CMakeLists.txt not found: $CMAKE_FILE" >&2
 else
   INSERT_MARKER="add_definitions(-DUNICODE -D_UNICODE)"
-  INSERT_AFTER="# Silence the deprecated static assertion in newer MSVC"
   if grep -Fq "SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS" "$CMAKE_FILE"; then
     echo "SKIP: MSVC coroutine silence already patched"
   elif grep -Fq "$INSERT_MARKER" "$CMAKE_FILE"; then
     sed "/^add_definitions(-DUNICODE -D_UNICODE)/a\\
-# Silence the deprecated static assertion in newer MSVC\\
-# toolsets (VS 18 \/ MSVC 14.51+). Several plugins still use it; this keeps them\\
-# compiling until they migrate to C++20.\\
+# 绕过新版 MSVC 对 <experimental/coroutine> 的静态断言报错。\\
+# 部分插件仍依赖实验性 coroutine 头文件，临时保留该宏直到上游迁移到 C++20。\\
 add_definitions(-D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)" \
       "$CMAKE_FILE" > "$CMAKE_FILE.tmp.$$"
     cat "$CMAKE_FILE.tmp.$$" > "$CMAKE_FILE"

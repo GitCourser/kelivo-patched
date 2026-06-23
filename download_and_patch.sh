@@ -39,7 +39,8 @@ fi
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
 
-archive_url="https://github.com/${OWNER_REPO}/archive/refs/tags/${VERSION_TAG}.tar.gz"
+# 使用 GitHub API 的 tarball 地址，兼容只有 Release 但没有 refs/tags 归档的上游版本。
+archive_url="https://api.github.com/repos/${OWNER_REPO}/tarball/${VERSION_TAG}"
 archive_file="$WORK_DIR/${VERSION_TAG}.tar.gz"
 
 echo "Latest release tag: $VERSION_TAG"
