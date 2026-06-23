@@ -4,12 +4,14 @@ set -eu
 # 将 Kelivo 的 Windows 数据路径改为便携路径：
 # 1. 应用自身数据从 path_provider 的 AppData/Roaming 目录改到程序目录旁。
 # 2. shared_preferences.json 也写入同一个便携目录，避免污染系统用户目录。
+# 3. 启动路径修正逻辑不再调用 Windows 的 getApplicationSupportDirectory()。
 #
 # 用法：
 #   sh patch_portable_data_path.sh
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 APP_DIRS_FILE="$ROOT_DIR/lib/utils/app_directories.dart"
+SANDBOX_FILE="$ROOT_DIR/lib/utils/sandbox_path_resolver.dart"
 MAIN_FILE="$ROOT_DIR/lib/main.dart"
 PUBSPEC_FILE="$ROOT_DIR/pubspec.yaml"
 PREFS_FILE="$ROOT_DIR/lib/utils/portable_shared_preferences.dart"
@@ -33,6 +35,7 @@ write_tmp_to() {
 }
 
 require_file "$APP_DIRS_FILE"
+require_file "$SANDBOX_FILE"
 require_file "$MAIN_FILE"
 require_file "$PUBSPEC_FILE"
 
@@ -57,6 +60,27 @@ else
 ' "$APP_DIRS_FILE" > "$TMP_FILE"
   write_tmp_to "$APP_DIRS_FILE"
   echo "PATCHED: 应用数据便携路径：$APP_DIRS_FILE"
+fi
+
+# 修补 SandboxPathResolver，避免启动时为缓存 supportDir 创建 AppData/Roaming 空目录。
+if grep -Fq "Windows 便携模式：复用 AppDirectories 的便携目录" "$SANDBOX_FILE"; then
+  echo "SKIP: SandboxPathResolver 已避免创建 Roaming 空目录"
+else
+  if ! grep -Fq "final sup = await getApplicationSupportDirectory();" "$SANDBOX_FILE"; then
+    echo "ERROR: SandboxPathResolver 中未找到 supportDir 初始化代码" >&2
+    exit 1
+  fi
+
+  sed '
+/^        final sup = await getApplicationSupportDirectory();$/c\
+        // Windows 便携模式：复用 AppDirectories 的便携目录。\
+        // 避免 getApplicationSupportDirectory() 创建 %AppData%/Roaming 空目录。\
+        final sup = Platform.isWindows\
+            ? dir\
+            : await getApplicationSupportDirectory();
+' "$SANDBOX_FILE" > "$TMP_FILE"
+  write_tmp_to "$SANDBOX_FILE"
+  echo "PATCHED: SandboxPathResolver 避免创建 Roaming 空目录：$SANDBOX_FILE"
 fi
 
 # 写入 Windows 便携版 SharedPreferences 实现，接管默认的 AppData/Roaming 存储。
